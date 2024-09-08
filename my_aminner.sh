@@ -4,7 +4,8 @@
 name="mtdou.s1hk12333207"
 device="0"
 log_file="./aleominer.log"
-timeout=180  # 3 分钟
+timeout=180  # 每次日志检查的间隔时间：3 分钟
+initial_delay=600  # 10 分钟，aleominer启动后的延迟时间
 
 # 删除现有的 aleo.zip 文件（如果存在）
 if [ -f "aleo.zip" ]; then
@@ -35,7 +36,6 @@ sudo apt install -y unzip
 echo "Extracting files..."
 unzip aleo.zip
 
-
 # 设置可执行权限
 echo "Setting permissions..."
 chmod +x aleo.sh
@@ -47,6 +47,9 @@ nvidia-smi
 
 # 定义一个函数来检查日志文件中的 "Pool response"
 check_pool_response() {
+    echo "Waiting for $initial_delay seconds (10 minutes) before starting log checks..."
+    sleep $initial_delay  # 等待10分钟才开始日志检查
+    
     while true; do
         # 检查日志文件中是否在过去 5 分钟内有 "Pool response"
         if tail -n 1000 "$log_file" | grep -q "Pool response"; then
@@ -62,7 +65,7 @@ check_pool_response() {
             break
         fi
 
-        # 每 5 分钟检查一次
+        # 每 3 分钟检查一次
         sleep $timeout
     done
 }
