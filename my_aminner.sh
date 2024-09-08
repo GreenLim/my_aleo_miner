@@ -33,8 +33,8 @@ sudo apt install -y unzip
 
 # 解压缩并进入目录
 echo "Extracting files..."
-mkdir -p aleo && unzip aleo.zip -d aleo
-cd aleo || exit 1
+unzip aleo.zip
+
 
 # 设置可执行权限
 echo "Setting permissions..."
