@@ -80,6 +80,10 @@ while true; do
     # 获取进程 ID
     miner_pid=$!
 
+    # 打印当前进程信息
+    echo "Aleominer started with PID: $miner_pid"
+    ps -p $miner_pid -o pid,cmd,%cpu,%mem,etime
+
     # 启动日志检查功能（在后台运行）
     check_pool_response &
 
