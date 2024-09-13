@@ -1,102 +1,122 @@
 #!/bin/bash
 
-# 定义变量
-name="mtdou.s1hk12333207"
-device="0"
-log_file="./aleominer.log"
-timeout=180  # 每次日志检查的间隔时间：3 分钟
-initial_delay=600  # 10 分钟，aleominer启动后的延迟时间
+# 读取系统环境变量，如果没有定义，则使用默认值
+name="${ALNAME:-mtdou.default}"  # 如果未设置环境变量 ALNAME，则使用默认值
+log_file="./prover.log"
+timeout=120  # 每次日志检查的间隔时间：2 分钟
+initial_delay=120  # 2 分钟，aleominer 启动后的延迟时间
+
+# 获取带时间戳的输出函数（UTC+8）
+log_with_timestamp() {
+    echo "$(TZ=Asia/Shanghai date '+%Y-%m-%d %H:%M:%S') - $1"
+}
 
 # 删除现有的 aleo.zip 文件（如果存在）
 if [ -f "aleo.zip" ]; then
-    echo "Found existing aleo.zip. Deleting it..."
+    log_with_timestamp "Found existing aleo.zip. Deleting it..."
     rm aleo.zip
 fi
 
 # 检查并终止正在运行的 aleominer 进程（如果存在）
 if pgrep -f "./aleominer" > /dev/null; then
-    echo "Found running aleominer process. Stopping it..."
+    log_with_timestamp "Found running aleominer process. Stopping it..."
     pkill -f "./aleominer"
     sleep 5  # 给系统时间清理进程
-    echo "Aleominer process stopped."
+    log_with_timestamp "Aleominer process stopped."
 else
-    echo "No running aleominer process found."
+    log_with_timestamp "No running aleominer process found."
 fi
 
 # 下载 Aleo Miner
-echo "Downloading Aleo Miner..."
-curl -L "https://public-download-ase1.s3.ap-southeast-1.amazonaws.com/aleo-miner/Aleo+miner+2.11.44.zip" --output aleo.zip
+log_with_timestamp "Downloading Aleo Miner..."
+curl -L "https://github.com/GreenLim/my_aleo_miner/releases/download/v1.1.3/aleominer+2.11.49.zip" --output aleo.zip
 
 # 安装 unzip 工具
-echo "Installing unzip..."
+log_with_timestamp "Installing unzip..."
 sudo apt update
 sudo apt install -y unzip
 
 # 解压缩并进入目录
-echo "Extracting files..."
+log_with_timestamp "Extracting files..."
 unzip aleo.zip
 
 # 设置可执行权限
-echo "Setting permissions..."
-chmod +x aleo.sh
+log_with_timestamp "Setting permissions..."
+chmod +x aleo_setup.sh
+chmod +x my_aleo_setup.sh
 chmod +x aleominer
 
 # 显示 GPU 信息
-echo "Checking NVIDIA GPU status..."
+log_with_timestamp "Checking NVIDIA GPU status..."
 nvidia-smi
 
-# 定义一个函数来检查日志文件中的 "Pool response"
-check_pool_response() {
-    echo "Waiting for $initial_delay seconds (10 minutes) before starting log checks..."
-    sleep $initial_delay  # 等待10分钟才开始日志检查
-    
+# 定义一个标志位，用于判断是否需要重启
+restart_flag=0
+
+# 定义一个函数来检查日志文件中的 "Pool response" 或日志的更新时间
+check_log_file() {
+    log_with_timestamp "Waiting for $initial_delay seconds (2 minutes) before starting log checks..."
+    sleep $initial_delay  # 等待2分钟才开始日志检查
+
     while true; do
-        # 检查日志文件中是否在过去 5 分钟内有 "Pool response"
-        if tail -n 1000 "$log_file" | grep -q "Pool response"; then
-            echo "Pool response found. Continuing..."
-        else
-            echo "No 'Pool response' found in the last $timeout seconds. Restarting aleominer..."
-            
-            # 杀掉 aleominer 进程
-            pkill -f ./aleominer
-            
-            # 等待 5 秒后重新启动
-            sleep 5
+        if [[ ! -f "$log_file" ]]; then
+            log_with_timestamp "Log file $log_file not found. Skipping log checks."
             break
         fi
 
-        # 每 3 分钟检查一次
+        # 检查日志文件是否在过去2分钟内有更新
+        last_modified=$(stat -c %Y "$log_file")
+        current_time=$(date +%s)
+        diff_time=$((current_time - last_modified))
+
+        if [ $diff_time -gt $timeout ]; then
+            log_with_timestamp "Log file has not been updated in the last 2 minutes. Restarting aleominer..."
+            restart_flag=1
+            break
+        fi
+
+        # 检查日志文件中是否在过去 2 分钟内有 "Pool response"
+        if tail -n 50 "$log_file" | grep -q "Pool response"; then
+            log_with_timestamp "Pool response found. Continuing..."
+        else
+            log_with_timestamp "No 'Pool response' found in the last 3 minutes. Restarting aleominer..."
+            restart_flag=1
+            break
+        fi
+
+        # 每 2 分钟检查一次
         sleep $timeout
     done
 }
 
-# 启动 aleominer 进程，并自动重新启动
-echo "Starting aleominer with name: $name and device: $device"
-
 while true; do
-    # 启动挖矿进程
-    nohup ./aleominer -u stratum+tcp://aleo-asia.f2pool.com:4400 -d $device -w $name >> $log_file 2>&1 &
-    
-    # 获取进程 ID
-    miner_pid=$!
+    # 启动 aleominer 进程
+    log_with_timestamp "Starting aleominer with worker name: $name"
+    sudo ./my_aleo_setup.sh -p stratum+tcp://aleo-asia.f2pool.com:4400 -w $name
 
-    # 打印当前进程信息
-    echo "Aleominer started with PID: $miner_pid"
-    ps -p $miner_pid -o pid,cmd,%cpu,%mem,etime
+    # 等待 aleominer 完全启动
+    sleep 5
 
-    # 启动日志检查功能（在后台运行）
-    check_pool_response &
+    # 获取 aleominer 的 PID
+    miner_pid=$(pgrep -f aleominer)
 
-    # 等待挖矿进程结束
-    wait $miner_pid
+    if [[ -z "$miner_pid" ]]; then
+        log_with_timestamp "Failed to start aleominer or couldn't find aleominer process."
+    else
+        log_with_timestamp "Aleominer started with PID: $miner_pid"
+        ps -p $miner_pid -o pid,cmd,%cpu,%mem,etime
+    fi
 
-    # 检查退出代码，如果非 0 则说明进程异常终止，重新启动
-    exit_code=$?
-    if [ $exit_code -ne 0 ]; then
-        echo "Aleominer crashed with exit code $exit_code. Restarting..."
+    # 将日志检查函数放在前台执行，避免后台进程过多
+    check_log_file
+
+    # 检查是否需要重启
+    if [ $restart_flag -eq 1 ]; then
+        log_with_timestamp "Restarting aleominer..."
+        restart_flag=0  # 重置重启标志
         sleep 10  # 等待 10 秒再重新启动
     else
-        echo "Aleominer stopped normally."
-        break
+        log_with_timestamp "Aleominer stopped normally."
+        break  # 如果正常退出，跳出循环
     fi
 done
